@@ -9,13 +9,17 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import  { allDepositRequest, approveDepositRequest, rejectDepositRequest }  from "./admin.js" 
+import db from './dbConnection.js';
+import cors from 'cors'
 
 const app = express();
+app.use(cors());
 
 // Recreate __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
+ 
 app.use('/assets', express.static(path.join(__dirname, 'assets')));
 
 
@@ -48,21 +52,7 @@ const upload = multer({ storage: storage });
 const SECRET_KEY = process.env.SECRET_KEY;
 
 
-// mysql connection
-const db = mysql.createConnection({ 
-  host: "localhost",
-  user: "root",
-  password: "",
-  database: "booker-website",
-});
 
-db.connect((err) => {
-  if (err) {
-    console.error("error connecting:", err);
-    return;
-  }
-  console.log("Database Connected"); 
-});
 
 function queryAsync(query, params) {
     return new Promise((resolve, reject) => {
@@ -72,6 +62,33 @@ function queryAsync(query, params) {
         });
     });
 }
+
+// game wallet statement add function--------------
+async function addWalletStatement(id, email, amount, game_name, description) {   
+  const transectionId = `GAME0${Date.now()}${id}`
+  try {
+     const user_game_wallet_balance  = await queryAsync("SELECT * FROM wallet WHERE email = ?", [email]); 
+     if(user_game_wallet_balance.length > 0){
+       const game_wallet_balance = user_game_wallet_balance[0].game_wallet;   
+       const statementQuery =  "INSERT INTO game_wallet (email, amount, game_name, description, updated_balance, transection_id) VALUES (?, ?, ?, ?, ?, ?)"  
+       const statementParams = [email, amount, game_name, JSON.stringify(description) || "" , game_wallet_balance, transectionId];
+       const statementResult = await queryAsync(statementQuery, statementParams);
+       if(statementResult.affectedRows > 0){
+          return true;
+       } else { return false }
+     } else{ 
+       return false;
+     }
+  } 
+  catch (error) {
+     res.status(500).send({ message: " Error adding wallet statement" });
+  }
+}
+
+// const query = "INSERT INTO wallet_statement (user_id, amount, game_name, description) VALUES (?, ?, ?, ?)"
+
+
+
 
 app.post("/register", async (req, res) => {
   const { user_name, email, password, mobile } = req?.body;
@@ -102,13 +119,14 @@ app.post("/register", async (req, res) => {
               } else {
                 // create user ----------------
                 const hashedPassword = await bcrypt.hash(password, 10);
+                const user_id = `UID${mobile}`
                 db.query(
                   "INSERT INTO users SET ?",
-                  { user_name, email, password: hashedPassword, mobile },
+                  { user_name, email, password: hashedPassword, mobile, user_id },
                   (err, result) => {
                     if (err) throw err;
                     // set wallet balance------- 
-                    db.query("INSERT INTO wallet (email, main_wallet, game_wallet) VALUES (?,?,?) ON DUPLICATE KEY UPDATE email = ?, main_wallet = ?, game_wallet = ?",[email, 0,0, email,0, 0],(err,result)=>{
+                    db.query("INSERT INTO wallet (user_id, main_wallet, game_wallet) VALUES (?,?,?) ON DUPLICATE KEY UPDATE user_id = ?, main_wallet = ?, game_wallet = ?",[user_id, 0,0, user_id,0, 0],(err,result)=>{
                         if(err) {
                             console.log("err",err);
                             res.status(500).send({ message: " Error creating user" });
@@ -146,7 +164,7 @@ app.post("/login", (req, res) => {
           if (isValidPassword) { 
             // generate token--------
             const token = jwt.sign(
-              { id: user.id, email: user.email },
+              { id: user.id, email: user.email, user_id : user.user_id },
               SECRET_KEY,
               { expiresIn: "1h" }
             );
@@ -257,50 +275,20 @@ app.post("/add-deposit-request",upload.single('image'), verifyToken, async(req,r
         } else {
             const image_url = `/assets/${image.filename}`;
             const query = "INSERT INTO deposit SET ?";
-            await queryAsync(query, {email, transection_hash, deposit_to ,amount, image_url}) 
+            const transection_id = `DPST0${req.user.id}${Date.now()}`
+            const user_id = req.user.user_id
+            await queryAsync(query, { user_id, transection_hash, deposit_to ,amount, image_url, transection_id}) 
             res.status(200).send({message: "Deposit Request Added Successfully!"})
         }
     } catch (error) {
         fs.unlinkSync(path.join(__dirname, 'assets', image.filename));
-        res.status(500).send(" Internal Server Error");
+        res.status(500).send({ message : "Internal Server Error" });
     }
 })
 
 
 
-app.post("/approve-deposit-request", async(req,res)=>{
-  const { id } = req?.body;
-  try {
-    const findIdQuery = "SELECT * FROM deposit WHERE id = ?";
-    const findIdResult = await queryAsync(findIdQuery, [id])
-    if(findIdResult.length > 0){ 
-       const checkPendingStatusQuery = "SELECT status FROM deposit WHERE id = ?";
-       const checkPendingStatusResult = await queryAsync(checkPendingStatusQuery, [id])
-        //check deposit status----------------------------
-       if(checkPendingStatusResult[0].status ==="C"){
-         res.status(302).send({ message: "Deposit Request is Cancelled!"})
-       } else if(checkPendingStatusResult[0].status ==="S"){
-         res.status(302).send({ message: "Deposit Request Already Success!"})
-       } else{
-         const updateStatusQuery = "UPDATE deposit SET status = ? WHERE id = ?";
-         await queryAsync(updateStatusQuery, ["S", id])
-         //update wallet balance-----------------------
-        const updateWalletBalanceQuery = "UPDATE wallet SET main_wallet = main_wallet + ? WHERE email = ?"
-        const updateWalletBalanceResult = await queryAsync(updateWalletBalanceQuery, [findIdResult[0].amount, findIdResult[0].email])
-        if( updateWalletBalanceResult.affectedRows > 0 ){
-          res.status(200).send({message: "Deposit Request Approved Successfully!"})
-        } else {
-          res.status(500).send("Internal Server Error")
-        }
-       }
-    } else{
-      res.status(400).send({ message: "Invalid Request!"})
-    }
-  } catch (error) {
-    res.status(500).send({ message: "Internal Server Error Main" });
-  }
-   
-})
+
 
 
 app.post("/add-withdrawal-request", verifyToken, async (req, res) => {
@@ -372,6 +360,10 @@ app.post("/inter-wallet-money-transfer", verifyToken, async (req, res) => {
           const deductMainWalletQuery = "UPDATE wallet SET main_wallet = main_wallet - ? , game_wallet = game_wallet + ? WHERE email = ?"
           const deductMainWalletResult = await queryAsync(deductMainWalletQuery, [amount, amount, email])
           if(deductMainWalletResult.affectedRows > 0){
+            // add statement in game_wallet table-------------
+            const description = "Received From Main Wallet"
+            const game_type = "Received"
+            await addWalletStatement(req.user.id, req.user.email, amount, game_type, description) 
             res.status(200).send({message: "Money Transfered Successfully!"})
           } else{
             res.status(500).send({ message: "Money Can't be transfered!" });
@@ -381,7 +373,7 @@ app.post("/inter-wallet-money-transfer", verifyToken, async (req, res) => {
     }
 
     // transfer from game wallet to main wallet-------------------
-    if(type === 2){
+    else if(type === 2){
       const findUserBalanceQuery = "SELECT * FROM wallet WHERE email = ?"
       const findUserBalanceResult = await queryAsync(findUserBalanceQuery, [email])
       if(findUserBalanceResult.length > 0){
@@ -392,12 +384,18 @@ app.post("/inter-wallet-money-transfer", verifyToken, async (req, res) => {
           const deductMainWalletQuery = "UPDATE wallet SET main_wallet = main_wallet + ? , game_wallet = game_wallet - ? WHERE email = ?"
           const deductMainWalletResult = await queryAsync(deductMainWalletQuery, [amount, amount, email])
           if(deductMainWalletResult.affectedRows > 0){
+             // add statement in game_wallet table-------------
+             const description = "Sent to Main Wallet"
+             const game_type = "Transfer"
+             await addWalletStatement(req.user.id, req.user.email, amount, game_type, description)
             res.status(200).send({message: "Money Transfered Successfully!"})
           } else{
             res.status(500).send({ message: "Money Can't be transfered!" });
           }
         }
       }
+    } else{
+      res.status(400).send({ message: "Invalid Type!" })
     }
   } catch (error) {
     res.status(500).send({ message: "Internal Server Error" });
@@ -407,34 +405,61 @@ app.post("/inter-wallet-money-transfer", verifyToken, async (req, res) => {
 
 
 app.post("/deduct-game-wallet", verifyToken, async (req, res) => {
-  const { amount, email } = req.body;
-  if(!email || isNaN(amount) || amount <= 0 ){
-    res.status(400).send({ message: "All fields are required and amount should be a positive number!" });
-  }
+  const { amount, email, type, game_type } = req.body;
+  if(!email || isNaN(amount) || amount <= 0 || !type || !game_type){
+    res.status(400).send({ message: "All fields are required and amount should always be a positive number!" });
+  } 
 
   try {
-    // check game wallet balance-------------
-    const findUserBalanceQuery = "SELECT * FROM wallet WHERE email = ?"
-    const findUserBalanceResult = await queryAsync(findUserBalanceQuery, [email])
-    if(findUserBalanceResult.length > 0){
-      if(findUserBalanceResult[0].game_wallet < amount){
-        res.status(400).send({ message: "Insufficient Balance!"})
-      } else{
-        // deduct game wallet---------------------------
-        const deductGameWalletQuery = "UPDATE wallet SET game_wallet = game_wallet - ? WHERE email = ?"
-        const deductGameWalletResult = await queryAsync(deductGameWalletQuery, [amount, email])
-        console.log("deductGameWalletResult",deductGameWalletResult)
-        if(deductGameWalletResult.affectedRows > 0){
-          res.status(200).send({message: "Money Deducted Successfully!"})
+    if(type === "deduct"){
+      // check game wallet balance-------------
+      const findUserBalanceQuery = "SELECT * FROM wallet WHERE email = ?"
+      const findUserBalanceResult = await queryAsync(findUserBalanceQuery, [email])
+      if(findUserBalanceResult.length > 0){
+        if(findUserBalanceResult[0].game_wallet < amount){
+          res.status(400).send({ message: "Insufficient Balance!"})
         } else{
-          res.status(500).send({ message: "Money Can't be deducted!" });
+          // deduct game wallet---------------------------
+          const deductGameWalletQuery = "UPDATE wallet SET game_wallet = game_wallet - ? WHERE email = ?"
+          const deductGameWalletResult = await queryAsync(deductGameWalletQuery, [amount, email]) 
+          if(deductGameWalletResult.affectedRows > 0){
+            // add statement in game_wallet table-------------
+            const description = "Add Bet"
+            await addWalletStatement(req.user.id, req.user.email, amount, game_type, description) 
+            res.status(200).send({ message: "Money Deducted Successfully!"})
+          } else{
+            res.status(500).send({ message: "Money Can't be deducted!" });
+          }
         }
       }
+    } else if(type === "add"){
+      // add game wallet---------------------------
+      const addGameWalletQuery = "UPDATE wallet SET game_wallet = game_wallet + ? WHERE email = ?"
+      const addGameWalletResult = await queryAsync(addGameWalletQuery, [amount, email])
+      if(addGameWalletResult.affectedRows > 0){
+        // add statement in game_wallet table-------------
+        const description = "win Bet"
+        await addWalletStatement(req.user.id, req.user.email, amount, game_type, description) 
+        res.status(200).send({message: "Money Added Successfully!"})
+      } else{
+        res.status(500).send({ message: "Money Can't be added!" });
+      }
+    } else{
+      res.status(400).send({ message: "Invalid Type!" });
     }
   } catch (error) {
-    res.status(500).send({ message: "Internal Server Error" });
+    res.status(500).send({ message: "Internal Server Errorr" });
   }
 })
+
+
+
+// admin api
+app.post("/admin/all-deposit-requests" , allDepositRequest)
+app.post("/admin/approve-deposit-request",  approveDepositRequest)
+app.post("/admin/decline-deposit-request" , rejectDepositRequest)
+
+
  
 
 const PORT = 3000;
