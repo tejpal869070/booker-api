@@ -6,8 +6,7 @@ dotenv.config();
 
 
 export default async function verifyToken(req, res, next) {
-    const email = req?.body?.email; 
-    console.log(req.body)
+    const email = req?.body?.email;  
     if(!email){ 
         return res.status(401).json({message: 'Unauthorized'});
     }
@@ -16,8 +15,7 @@ export default async function verifyToken(req, res, next) {
         if(!token){
             return res.status(401).json({message: "Access denied. No token provided."});
         } else{
-            token = token.replace("Bearer ", ""); 
-            console.log(token)
+            token = token.replace("Bearer ", "");  
             jwt.verify(token, process.env.SECRET_KEY, (err,result)=>{
                 if(err){
                     return res.status(401).json({message: "Invalid token."});

@@ -34,8 +34,8 @@ async function approveDepositRequest(req,res) {
            const checkPendingStatusQuery = "SELECT status FROM deposit WHERE id = ?";
            const checkPendingStatusResult = await queryAsync(checkPendingStatusQuery, [id])
             //check deposit status----------------------------
-           if(checkPendingStatusResult[0].status ==="C"){
-             return res.status(302).send({ message: "Deposit Request is Cancelled!"})
+           if(checkPendingStatusResult[0].status ==="R"){
+             return res.status(302).send({ message: "Deposit Request is Rejected!"})
            } else if(checkPendingStatusResult[0].status ==="S"){
              return res.status(302).send({ message: "Deposit Request Already Success!"})
            } else{
@@ -72,7 +72,7 @@ async function rejectDepositRequest(req,res) {
                 const query = "UPDATE deposit SET status = ?, reason = ? WHERE id = ?";
                 const result = await queryAsync(query, ["R", JSON.stringify(reason), id])
                 if(result.affectedRows > 0){
-                    return res.status(200).send({message: "Deposit Request Rejected Successfully!"})
+                    return res.status(200).send({ message: "Deposit Request Rejected Successfully!"})
                 } else {
                     return res.status(500).send({ message: "Deposit Request Not Rejected" })
                 }
@@ -87,4 +87,34 @@ async function rejectDepositRequest(req,res) {
     }
 }
 
-export { allDepositRequest, approveDepositRequest, rejectDepositRequest };
+
+async function inprocessWithdrawalRequest(req, res) {
+    const { id } = req?.body;
+    if (!id) {
+        return res.status(400).send({ message: "Id is required!" });
+    }
+    try {
+        const findWithdrawalQuery = "SELECT * FROM withdrawal WHERE id = ?";
+        const findWithdrawalResult = await queryAsync(findWithdrawalQuery, [id]);
+        if (findWithdrawalResult.length > 0) {
+            const findStatus = findWithdrawalResult[0].status
+            if (findStatus === "P") {
+                const query = "UPDATE withdrawal SET status = ?, WHERE id = ?";
+                const result = await queryAsync(query, ["I", id]);
+                if (result.affectedRows > 0) {
+                    return res.status(200).send({ message: "Withdrawal Request is now in process." });
+                } else {
+                    return res.status(500).send({ message: "Withdrawal Request Not Updated" });
+                }
+            } else{
+                return res.status(302).send({ message: "Withdrawal Request is Already Approved, Rejected or Cancelled" });
+            }
+        } else{
+            return res.status(400).send({ message: "Withdrawal Request Not Found!" });
+        }
+    } catch (error) {
+        return res.status(500).send({ message: "Internal Server Error" });
+    }
+}
+
+export { allDepositRequest, approveDepositRequest, rejectDepositRequest, inprocessWithdrawalRequest };
