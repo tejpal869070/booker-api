@@ -31,6 +31,6 @@ export default async function verifyToken(req, res, next) {
             })
         }
     } catch (error) {
-        res.status(500).send({ message: " Internal Server Error" });
+        return res.status(500).send({ message: " Internal Server Error" });
     }
 }
