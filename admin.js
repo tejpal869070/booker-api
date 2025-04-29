@@ -22,6 +22,21 @@ async function getUserDetail(user_id) {
       return res.status(500).send({ message: "Internal Server Error" });
     }
   }
+
+
+  async function getUserDetailEmail(email) {
+    if(!email){
+      return res.status(404).send({ message: "email is required !"})
+    }
+  
+    try {
+      const query = `SELECT u.id, u.user_name, u.email, u.mobile, u.user_pin, u.user_id, w.main_wallet, w.game_wallet FROM users u INNER JOIN wallet w ON u.user_id = w.user_id WHERE u.email = ?`;
+      const result = await queryAsync(query, [email]);
+      return result[0]
+    } catch (error) {
+      return res.status(500).send({ message: "Internal Server Error" });
+    }
+  }
   
 
 
@@ -36,6 +51,23 @@ async function allDepositRequest(req,res) {
         return res.status(500).send({ message: "Internal Server Error" });
     }
 }
+
+
+
+async function allWithdrawalRequest(req,res) { 
+  try {
+      const query = "SELECT * FROM withdrawal";
+      const params = [];
+      const results = await queryAsync(query, params); 
+      return res.status(200).send( results )
+       
+  } catch (error) {
+      return res.status(500).send({ message: "Internal Server Error" });
+  }
+}
+
+
+
 
 
 async function addMainStatement(transection_id, type, amount, updated_balance,	description, user_id ) {
@@ -139,7 +171,7 @@ async function inprocessWithdrawalRequest(req, res) {
         if (findWithdrawalResult.length > 0) {
             const findStatus = findWithdrawalResult[0].status
             if (findStatus === "P") {
-                const query = "UPDATE withdrawal SET status = ?, WHERE id = ?";
+                const query = "UPDATE withdrawal SET status = ? WHERE id = ?";
                 const result = await queryAsync(query, ["I", id]);
                 if (result.affectedRows > 0) {
                     return res.status(200).send({ message: "Withdrawal Request is now in process." });
@@ -153,8 +185,139 @@ async function inprocessWithdrawalRequest(req, res) {
             return res.status(400).send({ message: "Withdrawal Request Not Found!" });
         }
     } catch (error) {
+      console.log(error)
         return res.status(500).send({ message: "Internal Server Error" });
     }
 }
 
-export { allDepositRequest, approveDepositRequest, rejectDepositRequest, inprocessWithdrawalRequest };
+
+
+
+async function rejectWithdrawalRequest(req,res) {
+    const { id, reason } = req.body
+    if(!id || !reason){
+      return res.status(404).send({ message : "Id & Reason is required"})
+    } 
+
+    try {
+      // find withdrawal request
+      const withdrawalQuery = "SELECT * FROM withdrawal WHERE id = ?"
+      const withdrawalQueryResult = await queryAsync(withdrawalQuery, [id]) 
+      if(withdrawalQueryResult.length > 0){
+        // check status
+        if(withdrawalQueryResult[0].status === "P" || withdrawalQueryResult[0].status === "I"){
+          // set to rejected
+          const updateQuery = "UPDATE withdrawal SET status = ?, reason = ? WHERE id = ?" 
+          const updateQueryResult = await queryAsync(updateQuery, ["R", reason, id])
+          if(updateQueryResult.affectedRows > 0){
+            // ROLLBACK
+            const userDetail = await getUserDetailEmail(withdrawalQueryResult[0].email)  
+            const addAmountQuery = "UPDATE wallet SET main_wallet = main_wallet + ? WHERE user_id = ?"
+            const addAmountResult = await queryAsync(addAmountQuery, [withdrawalQueryResult[0].amount, userDetail.user_id])
+            if(addAmountResult.affectedRows > 0){
+              // delete in statement table
+              const deleteQuery = "DELETE FROM statement WHERE transection_id = ?"
+              await queryAsync(deleteQuery, [withdrawalQueryResult[0].transection_id])
+              // make new statemtn
+              const type = "Withdrawal"
+              const description = "Withdrawal Rejected"
+              const currentUserDetail = await getUserDetailEmail(withdrawalQueryResult[0].email)
+              await addMainStatement(withdrawalQueryResult[0].transection_id, type, withdrawalQueryResult[0].amount, currentUserDetail.main_wallet, description, userDetail.user_id)
+              return res.status(200).send({ message: "Withdrawal Request Rejected !"})
+            }
+            else{
+              return res.status(302).send({ message: "Error in cancelling request !"})
+            } 
+          } else{
+            return res.status(504).send({ message : "Erorr in Rejecting"})
+          }
+        } else{
+          return res.status(309).send({ message : "Request is already Rejecte or Cancelled"})
+        }
+      } else {
+        res.status(404).send({ message : "Request not found"})
+      }
+    } catch (error) {
+      return res.status(500).send({ message : "Internal Server Error !"})
+    }
+}
+
+
+
+
+async function apprveWithdrawalRequest(req,res) {
+  const { id } = req.body
+  if(!id){
+    return res.status(404).send({ message:" Id is required !"})
+  }
+
+  try {
+    // check status
+    const withdrawalQuery = "SELECT * FROM withdrawal WHERE id = ?"
+    const withdrawalQueryResult = await queryAsync(withdrawalQuery, [id])
+    if(withdrawalQueryResult.length > 0){
+      if(withdrawalQueryResult[0].status === "I"){
+
+        const updateQuery = "UPDATE withdrawal SET status = ? WHERE id = ?"
+        const updateQueryResult = await queryAsync(updateQuery, ["S", id])
+        if(updateQueryResult.affectedRows > 0){
+          //  update statement table
+              const deleteQuery = "DELETE FROM statement WHERE transection_id = ?"
+              await queryAsync(deleteQuery, [withdrawalQueryResult[0].transection_id])
+              const type = "Withdrawal"
+              const description = "Withdrawal Success"
+              const userDetail = await getUserDetailEmail(withdrawalQueryResult[0].email)
+              await addMainStatement(withdrawalQueryResult[0].transection_id, type, withdrawalQueryResult[0].amount, userDetail.main_wallet, description, userDetail.user_id)
+              return res.status(200).send({ message: "Withdrawal Request Success !"})
+        } else {
+          return res.status(309).send({ message : "Not Updated !"})
+        }
+      } else {
+        return res.status(309).send({ message : "Withdrawal request not in process"})
+      }
+    }
+    else {
+      res.status(404).send({ message : "Request not found"})
+    }
+  } catch (error) {
+    
+  }
+}
+
+
+async function getGames(req,res) {
+  try {
+    const gameQuery = "SELECT * FROM games"
+    const games = await queryAsync(gameQuery, [])
+    return res.status(200).send(games)
+  } catch (error) {
+    return res.status(500).send({ message : "Internal Server Error !"})
+  }
+}
+
+
+async function updateGames(req,res) {
+  const { id } = req.params; 
+  const { status } = req.body
+  if(!id || !status || (status !== 'Y' && status !== 'N')){
+    return res.status(404).send({ message : "Id and Status is required !"})
+  }
+
+  try {
+    const query = 'UPDATE games SET status = ? WHERE id = ?';
+    const result = await queryAsync(query, [status, id])
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Game not found' });
+    }
+    return res.status(200).json({ message: 'Game status updated successfully' });
+  } catch (error) {
+    console.log(error)
+    return res.status(500).send({ message : "Internal Server Error !"})
+  }
+  
+}
+
+
+
+
+export { allDepositRequest, approveDepositRequest, rejectDepositRequest, inprocessWithdrawalRequest, allWithdrawalRequest , rejectWithdrawalRequest,apprveWithdrawalRequest, getGames, updateGames };

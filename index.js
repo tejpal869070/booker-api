@@ -11,9 +11,14 @@ import { fileURLToPath } from "url";
 import fs from "fs";
 import {
   allDepositRequest,
+  allWithdrawalRequest,
   approveDepositRequest,
   inprocessWithdrawalRequest,
   rejectDepositRequest,
+  rejectWithdrawalRequest,
+  apprveWithdrawalRequest,
+  getGames,
+  updateGames
 } from "./admin.js";
 import db from "./dbConnection.js";
 import cors from "cors";
@@ -101,8 +106,7 @@ async function addMainStatement(transection_id, type, amount, updated_balance,	d
       } else {
         return false;
       }
-  } catch (error) {
-    console.log(error)
+  } catch (error) { 
     return false;
   }
 }
@@ -245,7 +249,7 @@ app.post("/login", (req, res) => {
             const token = jwt.sign(
               { id: user.id, email: user.email, user_id: user.user_id },
               SECRET_KEY,
-              { expiresIn: "1h" }
+              { expiresIn: "24h" }
             );
             // set token in database-------- 
             db.query(
@@ -347,7 +351,7 @@ app.post("/verify-otp", async (req, res) => {
 
 app.post("/get-user-details", verifyToken, async (req, res) => {
   try {
-    const query = `SELECT u.id, u.user_name, u.email, u.mobile, u.user_pin, w.main_wallet, w.game_wallet FROM users u INNER JOIN wallet w ON u.user_id = w.user_id WHERE u.email = ?`;
+    const query = `SELECT u.id, u.user_name, u.email, u.mobile, u.user_pin,u.created_at, w.main_wallet, w.game_wallet FROM users u INNER JOIN wallet w ON u.user_id = w.user_id WHERE u.email = ?`;
     const result = await queryAsync(query, [req?.body.email]);
     res.status(200).send({
         message: "User Details Retrieved Successfully!",
@@ -460,13 +464,12 @@ app.post( "/add-withdrawal-request", verifyToken, verifyPin, async (req, res) =>
         const findUserBalanceQuery = "SELECT main_wallet FROM wallet WHERE user_id = ?";
         const findUserBalanceResult = await queryAsync(findUserBalanceQuery, [ req.user.user_id ]);
         if (findUserBalanceResult.length > 0) {
-          if (Number(findUserBalanceResult[0].main_wallet) < Number(amount)) {
-            console.log( Number(findUserBalanceResult[0].main_wallet) < Number(amount) )
+          if (Number(findUserBalanceResult[0].main_wallet) < Number(amount)) { 
             res.status(400).send({ message: "Insufficient Balance!" });
           } else {
             // create new withdrawal request-------------------
             const createWithdrawalQuery = "INSERT INTO withdrawal SET ?";
-            const transection_id = `DPST0${req.user.id}${Date.now()}`;
+            const transection_id = `WDST0${req.user.id}${Date.now()}`;
             const createWithdrawalResult = await queryAsync( createWithdrawalQuery, { email, withdrawal_address, amount, transection_id } );
             if (createWithdrawalResult.affectedRows > 0) {
               // deduct wallet balance---------------------------
@@ -727,10 +730,11 @@ app.post('/cancel-withdrawal-request', verifyToken, async(req,res)=>{
             const userDetail = await getUserDetail(req.user.email)  
             const type = "Withdrawal"
             const description = "Withdrawal Cancelled"
-            setTimeout(async() => {
-              await addMainStatement(withdrawalQueryResult[0].transection_id, type, withdrawalQueryResult[0].amount, userDetail.main_wallet, description, userDetail.user_id)
-            }, 15000);
-            return res.status(200).send({ message: "Withdrawal Request Cancelled !"})
+
+            await addMainStatement(withdrawalQueryResult[0].transection_id, type, withdrawalQueryResult[0].amount, userDetail.main_wallet, description, userDetail.user_id)
+             
+            return res.status(200).send({ message : "Withdrawal Request Cancelled !"})
+            
           } else{
             return res.status(302).send({ message: "Error in cancelling request !"})
           }
@@ -741,8 +745,7 @@ app.post('/cancel-withdrawal-request', verifyToken, async(req,res)=>{
         return res.status(302).send({ message : "Withdrawal Request can't be cancelled !"})
       }
     }
-  } catch (error) {
-    console.log(error)
+  } catch (error) { 
     return res.status(500).send({ message: "Internal Server Error !"})
   }
 })
@@ -758,15 +761,31 @@ app.post('/get-statement', verifyToken, async(req,res)=>{
   }
 })
 
-
+app.post("/user/get-games" ,async(req,res)=>{
+  try {
+    const gameQuery = "SELECT * FROM games WHERE status = 'Y'"
+    const games = await queryAsync(gameQuery, [])
+    return res.status(200).send(games)
+  } catch (error) {
+    return res.status(500).send({ message : "Internal Server Error !"})
+  }
+})
  
 
 // admin api
 app.post("/admin/all-deposit-requests", allDepositRequest);
 app.post("/admin/approve-deposit-request", approveDepositRequest);
 app.post("/admin/decline-deposit-request", rejectDepositRequest);
+app.post("/admin/all-withdrawal-request", allWithdrawalRequest)
 
 app.post("/admin/inprocess-withdrawal-request", inprocessWithdrawalRequest);
+app.post("/admin/reject-withdrawal-request", rejectWithdrawalRequest)
+app.post("/admin/approve-withdrawal-request", apprveWithdrawalRequest)
+
+ 
+app.post("/admin/get-games", getGames)
+app.post("/admin/update-games/:id", updateGames)
+
 
 const PORT = 3000;
 app.listen(PORT, () => {
