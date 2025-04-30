@@ -318,6 +318,93 @@ async function updateGames(req,res) {
 }
 
 
+async function addNewMatch(req, res) {
+  const { match_time, sections, teams, title } = req.body; 
+  console.log(req.files)
+  if (!match_time || !sections || !teams || !title) {
+    return res.status(400).json({ message: "Missing required fields" });
+  }
+
+  // Handle file uploads and save filenames
+  let parsedTeams;
+  try {
+    parsedTeams = typeof teams === 'string' ? JSON.parse(teams) : teams;
+  } catch (error) {
+    return res.status(400).json({ message: 'Invalid teams format' });
+  }
+
+  const teamImageFilenames = req.files ? req.files.map(file => file.filename) : [];
+
+  if (teamImageFilenames.length > 0) {
+    parsedTeams.forEach((team, index) => {
+      if (teamImageFilenames[index]) {
+        team.image = teamImageFilenames[index];
+      }
+    });
+  }
+ 
+
+  try {
+    const query = `INSERT INTO match_table (match_time, sections, teams, title) VALUES (?, ?, ?, ?)`;
+    const values = [match_time, JSON.stringify(sections), JSON.stringify(teams), title];
+    const result = await queryAsync(query, values);
+
+    if (result.affectedRows > 0) {
+      return res.status(200).send({ message: "Match Added Successfully!" });
+    } else {
+      return res.status(409).send({ message: "Error in adding match" });
+    }
+  } catch (error) {
+    console.error(error); // Log error for debugging
+    return res.status(500).send({ message: "Internal Server Error" });
+  }
+}
 
 
-export { allDepositRequest, approveDepositRequest, rejectDepositRequest, inprocessWithdrawalRequest, allWithdrawalRequest , rejectWithdrawalRequest,apprveWithdrawalRequest, getGames, updateGames };
+async function getAllMatch(req, res) {
+  try {
+    const query = "SELECT * FROM match_table";
+    const result = await queryAsync(query, []);
+ 
+    const parsedResult = result.map(match => { 
+      if (match.sections) {
+        match.sections = JSON.parse(JSON.parse(match.sections));
+      }
+ 
+      if (match.teams) {
+        match.teams = JSON.parse(match.teams);
+      }
+
+      return match;
+    });
+
+    return res.status(200).send(parsedResult);
+  } catch (error) {
+    return res.status(500).send({ message: "Internal Server Error!" });
+  }
+}
+
+
+async function getSingleMatchDetail (req,res){
+  const { id } = req.body
+  if(!id){
+    return res.status(404).send({ message : "Id is required !"})
+  }
+  try {
+    // find match
+    const findyQuery = "SELECT * FROM match_table WHERE id = ?"
+    const queryResult = await queryAsync(findyQuery, [id])
+    if(queryResult.length > 0){
+      queryResult[0].sections = JSON.parse(JSON.parse(queryResult[0].sections));
+      queryResult[0].teams = JSON.parse(queryResult[0].teams);
+      return res.status(200).send(queryResult[0])
+    } else {
+      return res.status(404).send({ message : "No match found !"})
+    }
+  } catch (error) {
+    return res.status(500).send({ message : "Internal server error !"})
+  }
+}
+
+
+export { allDepositRequest, approveDepositRequest,getSingleMatchDetail, rejectDepositRequest, inprocessWithdrawalRequest, allWithdrawalRequest , rejectWithdrawalRequest,apprveWithdrawalRequest,getAllMatch, getGames,addNewMatch, updateGames };

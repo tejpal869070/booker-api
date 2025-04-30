@@ -18,7 +18,10 @@ import {
   rejectWithdrawalRequest,
   apprveWithdrawalRequest,
   getGames,
-  updateGames
+  updateGames,
+  addNewMatch,
+  getAllMatch,
+  getSingleMatchDetail
 } from "./admin.js";
 import db from "./dbConnection.js";
 import cors from "cors";
@@ -779,12 +782,19 @@ app.post("/admin/decline-deposit-request", rejectDepositRequest);
 app.post("/admin/all-withdrawal-request", allWithdrawalRequest)
 
 app.post("/admin/inprocess-withdrawal-request", inprocessWithdrawalRequest);
-app.post("/admin/reject-withdrawal-request", rejectWithdrawalRequest)
+app.post("/admin/reject-withdrawal-request", rejectWithdrawalRequest) 
 app.post("/admin/approve-withdrawal-request", apprveWithdrawalRequest)
 
  
 app.post("/admin/get-games", getGames)
 app.post("/admin/update-games/:id", updateGames)
+
+
+app.post("/admin/add-new-match", upload.array('team_image') ,addNewMatch)
+
+app.post("/admin/get-all-match", getAllMatch)
+
+app.post("/get-single-match-detail", getSingleMatchDetail)
 
 
 const PORT = 3000;
