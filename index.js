@@ -21,7 +21,9 @@ import {
   updateGames,
   addNewMatch,
   getAllMatch,
-  getSingleMatchDetail
+  getSingleMatchDetail,
+  changeMatchStatus,
+  updateMatchResults
 } from "./admin.js";
 import db from "./dbConnection.js";
 import cors from "cors";
@@ -80,7 +82,7 @@ async function addWalletStatement( id, email, amount, game_name, description, us
       const game_wallet_balance = user_game_wallet_balance[0].game_wallet;
       const statementQuery = "INSERT INTO game_wallet (email, amount, game_name, description, updated_balance, transection_id) VALUES (?, ?, ?, ?, ?, ?)";
       const statementParams = [ email, amount, game_name, JSON.stringify(description) || "", parseFloat(game_wallet_balance), transectionId ];
-      const statementResult = await queryAsync(statementQuery, statementParams);
+      const statementResult = await queryAsync(statementQuery, statementParams); 
       if (statementResult.affectedRows > 0) {
         return true;
       } else {
@@ -773,6 +775,107 @@ app.post("/user/get-games" ,async(req,res)=>{
     return res.status(500).send({ message : "Internal Server Error !"})
   }
 })
+
+
+app.post("/add-match-bet", verifyToken, async(req,res)=>{
+  const { match_id, bet_type, bet_value, amount ,section_id } = req.body 
+  if( !match_id || !bet_type  || bet_type.length !== 1 || isNaN(amount) || amount < 0 || !section_id){ 
+    return res.status(404).send({ message : "All fields are required !"})
+  } 
+  try { 
+      // find match
+      const matchQuery = "SELECT * FROM match_table WHERE id = ?"
+      const matchQueryResult = await queryAsync(matchQuery, [match_id])
+      if(matchQueryResult.length > 0){
+        // not check match status. User can bet only when status id UC (UpComing) not LIVE
+        if(matchQueryResult[0].status === "LIVE" || matchQueryResult[0].status === "C"){
+          return res.status(309).send({ message : "Match already started, You can place bet now. "})
+        }
+        // check if match is open to bet
+        else if(matchQueryResult[0].can_place_bet === "N"){
+          return res.status(403).send({ message : "Betting hasn't started yet !"})
+        } else{
+          // check user balance
+          const userDetail = await getUserDetail(req.user.email)
+          if(userDetail.game_wallet < amount){
+            return res.status(309).send({ message : "Insufficant balance !"})
+          } 
+          // add bet recore in table
+          const user_id = userDetail.user_id
+          const betQuery = "INSERT INTO match_bets SET ?"
+          const betResult = await queryAsync(betQuery, {match_id, bet_type, bet_value, amount, user_id, section_id})
+          if(betResult.affectedRows > 0){
+            // deduct from wallet----------
+            const walletUpdateQuery = "UPDATE wallet SET game_wallet = game_wallet - ? WHERE user_id = ? "
+            await queryAsync( walletUpdateQuery, [amount, req.user.user_id])
+            // add in statemtn
+            const game_name = "Cricket Match"
+            const description = "Bet in Match Success"
+            await addWalletStatement(req.user.id, req.user.email, parseFloat(amount), game_name, description, req.user.user_id) 
+            return res.status(200).send({ message : "Bet Success"})
+          } else {
+            return res.send(309).send({ message : "Cant Place Bet !"})
+          }
+          // res.status(200).send({ message : "Can bet"})
+        }
+      } else{
+        return res.status(404).send({ message : "Match Not Found"})
+      }
+     
+  } catch (error) {
+    console.log(error)
+    return res.status(500).send({ message : "Internal Server Error !"})
+  }
+   
+})
+
+app.post("/my-match-bets", verifyToken, async (req, res) => {
+  try {
+    const betsQuery = "SELECT * FROM match_bets WHERE user_id = ?";
+    const bets = await queryAsync(betsQuery, [req.user.user_id]);
+
+    const enrichedBets = await Promise.all(
+      bets.map(async (bet) => {
+        const matchQuery = "SELECT * FROM match_table WHERE id = ?";
+        const match = await queryAsync(matchQuery, [bet.match_id]);
+
+        if (match.length > 0) {
+          const matchDetails = match[0];
+
+          // Safely parse JSON fields
+          try {
+            matchDetails.sections = JSON.parse(JSON.parse(matchDetails.sections));
+          } catch (e) {
+            matchDetails.sections = []; // fallback if parsing fails
+          }
+
+          try {
+            matchDetails.teams = JSON.parse(matchDetails.teams);
+          } catch (e) {
+            matchDetails.teams = []; // fallback if parsing fails
+          }
+
+          return {
+            ...bet,
+            match_details: matchDetails
+          };
+        } else {
+          return {
+            ...bet,
+            match_details: null
+          };
+        }
+      })
+    );
+
+    return res.status(200).send(enrichedBets);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).send({ message: "Internal Server Error!" });
+  }
+});
+
+
  
 
 // admin api
@@ -795,6 +898,11 @@ app.post("/admin/add-new-match", upload.array('team_image') ,addNewMatch)
 app.post("/admin/get-all-match", getAllMatch)
 
 app.post("/get-single-match-detail", getSingleMatchDetail)
+
+
+app.post("/admin/change-match-status", changeMatchStatus)
+
+app.post("/admin/update-match-results", updateMatchResults)
 
 
 const PORT = 3000;

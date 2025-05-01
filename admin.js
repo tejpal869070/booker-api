@@ -407,4 +407,70 @@ async function getSingleMatchDetail (req,res){
 }
 
 
-export { allDepositRequest, approveDepositRequest,getSingleMatchDetail, rejectDepositRequest, inprocessWithdrawalRequest, allWithdrawalRequest , rejectWithdrawalRequest,apprveWithdrawalRequest,getAllMatch, getGames,addNewMatch, updateGames };
+
+async function changeMatchStatus(req,res) {
+  const { id, status, can_bet_place } = req.body 
+  if(!id || !status){
+    return res.status(404).send({ message : "Id & status is required !"})
+  }
+  try {
+    // find match
+    const findyQuery = "SELECT * FROM match_table WHERE id = ?"
+    const queryResult = await queryAsync(findyQuery, [id])
+    if(queryResult.length > 0){
+      const updateQuery = "UPDATE match_table SET status = ?, can_place_bet = ? WHERE id = ?"
+      const updateResult = await queryAsync(updateQuery, [status, can_bet_place, id])
+      if(updateResult.affectedRows > 0){
+        return res.status(200).send({ message : "Match is Live Now !"})
+      } else {
+        return res.status(309).send({ message : "Error in making Live !"})
+      }
+    } else { 
+      return res.status(404).send({ message : "No match found !"})
+    }
+  } catch (error) {
+    return res.status(500).send({ message : "Internal server error !"})
+  }
+}
+
+
+async function updateMatchResults(req, res) {
+  const { match_id, section_id, result } = req.body;
+
+  if (!section_id || !match_id || !result) {
+    return res.status(400).send({ message: "All fields are required!" });
+  }
+
+  try {
+    // Fetch match
+    const findQuery = "SELECT * FROM match_table WHERE id = ?";
+    const queryResult = await queryAsync(findQuery, [match_id]);
+
+    if (queryResult.length === 0) {
+      return res.status(404).send({ message: "No match found!" });
+    }
+
+    // Parse sections
+    let match = queryResult[0];
+    let sections = JSON.parse(JSON.parse(match.sections)); 
+    // Find and update the section
+    const sectionIndex = sections.findIndex(sec => sec.id === Number(section_id));
+    if (sectionIndex === -1) {
+      return res.status(404).send({ message: "Section not found!" });
+    }
+
+    sections[sectionIndex].result = result;
+
+    // Update match in database
+    const updateQuery = "UPDATE match_table SET sections = ? WHERE id = ?";
+    await queryAsync(updateQuery, [JSON.stringify(JSON.stringify(sections)), match_id]);
+
+    return res.status(200).send({ message: "Match section result updated successfully!" });
+
+  } catch (error) {
+    console.error(error);
+    return res.status(500).send({ message: "Internal server error!" });
+  }
+}
+
+export { allDepositRequest,changeMatchStatus,updateMatchResults, approveDepositRequest,getSingleMatchDetail, rejectDepositRequest, inprocessWithdrawalRequest, allWithdrawalRequest , rejectWithdrawalRequest,apprveWithdrawalRequest,getAllMatch, getGames,addNewMatch, updateGames };
