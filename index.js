@@ -23,7 +23,10 @@ import {
   getAllMatch,
   getSingleMatchDetail,
   changeMatchStatus,
-  updateMatchResults
+  updateMatchResults,
+  deleteMatch,
+  winLossMatch,
+  getAllBets
 } from "./admin.js";
 import db from "./dbConnection.js";
 import cors from "cors";
@@ -242,7 +245,7 @@ app.post("/login", (req, res) => {
     return res.status(400).send({ message: "Email & Password is required" });
   }
   try {
-    db.query("SELECT * FROM USERS WHERE email =?", [email], (err, result) => {
+    db.query("SELECT * FROM users WHERE email = ?", [email], (err, result) => {
       if (err) {
         res.status(409).send({ message: "Internal Server Error !" });
       } else {
@@ -903,6 +906,12 @@ app.post("/get-single-match-detail", getSingleMatchDetail)
 app.post("/admin/change-match-status", changeMatchStatus)
 
 app.post("/admin/update-match-results", updateMatchResults)
+
+app.post("/admin/delete-match", deleteMatch)
+
+app.post("/admin/win-loss-match", winLossMatch)
+
+app.post("/admin/get-all-bets", getAllBets)
 
 
 const PORT = 3000;

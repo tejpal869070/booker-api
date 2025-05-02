@@ -15,13 +15,38 @@ async function getUserDetail(user_id) {
     }
   
     try {
-      const query = `SELECT u.id, u.user_name, u.email, u.mobile, u.user_pin, w.main_wallet, w.game_wallet FROM users u INNER JOIN wallet w ON u.user_id = w.user_id WHERE u.user_id = ?`;
+      const query = `SELECT u.id, u.user_name, u.email, u.mobile, u.user_pin, u.user_id, w.main_wallet, w.game_wallet FROM users u INNER JOIN wallet w ON u.user_id = w.user_id WHERE u.user_id = ?`;
       const result = await queryAsync(query, [user_id]);
       return result[0]
     } catch (error) {
       return res.status(500).send({ message: "Internal Server Error" });
     }
   }
+
+
+  // game wallet statement add function--------------
+async function addWalletStatement( id, email, amount, game_name, description, user_id) {
+  const transectionId = `GAME0${id}${Date.now()}`;
+  try {
+    const user_game_wallet_balance = await queryAsync( "SELECT * FROM wallet WHERE user_id = ?", [user_id] );
+    console.log(user_id)
+    if (user_game_wallet_balance.length > 0) {
+      const game_wallet_balance = user_game_wallet_balance[0].game_wallet;
+      const statementQuery = "INSERT INTO game_wallet (email, amount, game_name, description, updated_balance, transection_id) VALUES (?, ?, ?, ?, ?, ?)";
+      const statementParams = [ email, amount, game_name, JSON.stringify(description) || "", parseFloat(game_wallet_balance), transectionId ];
+      const statementResult = await queryAsync(statementQuery, statementParams); 
+      if (statementResult.affectedRows > 0) {
+        return true;
+      } else {
+        return false;
+      }
+    } else {
+      return false;
+    }
+  } catch (error) { 
+    res.status(500).send({ message: " Error adding wallet statement" });
+  }
+}
 
 
   async function getUserDetailEmail(email) {
@@ -473,4 +498,163 @@ async function updateMatchResults(req, res) {
   }
 }
 
-export { allDepositRequest,changeMatchStatus,updateMatchResults, approveDepositRequest,getSingleMatchDetail, rejectDepositRequest, inprocessWithdrawalRequest, allWithdrawalRequest , rejectWithdrawalRequest,apprveWithdrawalRequest,getAllMatch, getGames,addNewMatch, updateGames };
+
+
+async function deleteMatch(req, res) {
+  const { id } = req.body;
+  if(!id){
+    return res.status(404).send({ message : "Id is required !"})
+  }
+
+  try {
+    // 1. Check if match exists
+    const findQuery = "SELECT * FROM match_table WHERE id = ?";
+    const matchResult = await queryAsync(findQuery, [id]);
+
+    if (matchResult.length === 0) {
+      return res.status(404).send({ message: 'Match not found' });
+    }
+
+    // 2. Check for related match_bets
+    const betsQuery = "SELECT * FROM match_bets WHERE match_id = ?";
+    const betsResult = await queryAsync(betsQuery, [id]);
+
+    if (betsResult.length > 0) {
+      return res.status(400).send({ message: 'Cannot delete match with existing bets' });
+    }
+
+    // 3. Delete the match
+    const deleteQuery = "DELETE FROM match_table WHERE id = ?";
+    await queryAsync(deleteQuery, [id]);
+
+    res.status(200).send({ message: 'Match deleted successfully' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ message: 'Internal server error' });
+  }
+}
+
+
+
+async function winLossMatch(req, res) {
+  const { id, section_id } = req.body;
+  if (!id || !section_id) {
+    return res.status(404).send({ message: "Id is required!" });
+  }
+
+  try {
+    // Check if match exists
+    const findQuery = "SELECT * FROM match_table WHERE id = ?";
+    const matchData = await queryAsync(findQuery, [id]);
+
+    if (matchData.length === 0) {
+      return res.status(404).send({ message: 'Match not found' });
+    }
+
+    // Find all bets by match id and section id
+    const matchQuery = "SELECT * FROM match_bets WHERE match_id = ? AND section_id = ?";
+    const matchBetsResult = await queryAsync(matchQuery, [id, section_id]);
+
+    // Parse sections
+    const match = matchData[0];
+    const section = JSON.parse(JSON.parse(match.sections))?.find(
+      i => Number(i.id) === Number(section_id)
+    );
+
+    if (!section) {
+      return res.status(404).send({ message: 'Section not found' });
+    }
+
+    const winningUsers = [];
+    const sectionResult = section.result;
+    const lastDigit = sectionResult.toString().slice(-1);
+
+    for (let bet of matchBetsResult) {
+      const isExact = bet.bet_type === 'E' && Number(bet.bet_value) === Number(sectionResult);
+      const isLastDigit = bet.bet_type === 'L' && Number(bet.bet_value) === Number(lastDigit);
+
+      if (isExact || isLastDigit) {
+        winningUsers.push(bet);
+
+        // Get user's wallet
+        const walletQuery = "SELECT * FROM wallet WHERE user_id = ?";
+        const walletResult = await queryAsync(walletQuery, [bet.user_id]);
+
+        if (walletResult.length > 0) {
+          const wallet = walletResult[0];
+          const amountWon = Number(bet.amount) * 9;
+          const newBalance = Number(wallet.game_wallet) + Number(amountWon); 
+          // Update wallet balance
+          const updateWalletQuery = "UPDATE wallet SET game_wallet = ? WHERE user_id = ?";
+          await queryAsync(updateWalletQuery, [newBalance, bet.user_id]);
+
+          //  Update win_amount in match_bets
+          const updateBetQuery = "UPDATE match_bets SET win_amount = ? WHERE id = ?";
+          await queryAsync(updateBetQuery, [amountWon, bet.id]);
+
+          // update game wallet statement
+          const userDetail = await getUserDetail(bet.user_id)
+          const game_name = "Match"
+          const description = "Match Win"
+          await addWalletStatement(userDetail.id, userDetail.email, amountWon, game_name, description, userDetail.user_id)
+        }
+      }
+    }
+
+    return res.status(200).send({ winners: winningUsers });
+
+  } catch (error) { 
+    res.status(500).send({ message: 'Internal server error' });
+  }
+}
+
+
+
+async function getAllBets(req, res) {
+  const { id } = req.body;
+  if (!id) {
+    return res.status(404).send({ message: "Id is required!" });
+  }
+
+  try {
+    const betsQuery = "SELECT * FROM match_bets WHERE match_id = ?";
+    const bets = await queryAsync(betsQuery, [id]);
+
+    // Get unique user_ids
+    const userIds = [...new Set(bets.map(bet => bet.user_id))];
+
+    // Fetch all user details at once
+    const placeholders = userIds.map(() => '?').join(',');
+    const usersQuery = `SELECT * FROM users WHERE user_id IN (${placeholders})`;
+    const users = await queryAsync(usersQuery, userIds);
+
+    // Convert to map for fast lookup
+    const userMap = {};
+    users.forEach(user => {
+      userMap[user.user_id] = user;
+    });
+
+    // match info
+    const matchQuery = "SELECT * FROM match_table WHERE id = ?"
+    const matchResult = await queryAsync(matchQuery, [id])
+    const sections = JSON.parse(JSON.parse(matchResult[0].sections)) 
+
+    // Attach user details to each bet
+    const resultWithUserDetails = bets.map(bet => ({
+      ...bet,
+      mobile: userMap[bet.user_id].mobile || null,
+      section : sections.find(i=> Number(i.id) === Number(bet.section_id))?.after_over
+    }));
+
+    return res.status(200).send(resultWithUserDetails);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).send({ message: 'Internal server error' });
+  }
+}
+
+
+
+
+
+export { allDepositRequest,deleteMatch,getAllBets, winLossMatch,changeMatchStatus,updateMatchResults, approveDepositRequest,getSingleMatchDetail, rejectDepositRequest, inprocessWithdrawalRequest, allWithdrawalRequest , rejectWithdrawalRequest,apprveWithdrawalRequest,getAllMatch, getGames,addNewMatch, updateGames };
