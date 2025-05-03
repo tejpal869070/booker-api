@@ -111,7 +111,7 @@ async function addMainStatement(transection_id, type, amount, updated_balance,	d
           return false;
         }
     } catch (error) {
-      return res.status(500).send({ message: "Internal Server Error" });
+      return false
     }
   }
 
@@ -219,7 +219,7 @@ async function inprocessWithdrawalRequest(req, res) {
 
 
 async function rejectWithdrawalRequest(req,res) {
-    const { id, reason } = req.body
+    const { id, reason } = req.body 
     if(!id || !reason){
       return res.status(404).send({ message : "Id & Reason is required"})
     } 
@@ -263,6 +263,7 @@ async function rejectWithdrawalRequest(req,res) {
         res.status(404).send({ message : "Request not found"})
       }
     } catch (error) {
+      console.log(error)
       return res.status(500).send({ message : "Internal Server Error !"})
     }
 }
