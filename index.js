@@ -26,7 +26,8 @@ import {
   updateMatchResults,
   deleteMatch,
   winLossMatch,
-  getAllBets
+  getAllBets,
+  getAdminData
 } from "./admin.js";
 import db from "./dbConnection.js";
 import cors from "cors";
@@ -34,8 +35,24 @@ import verifyPin from "./middleware/pinVerification.js";
 import CryptoJS from "crypto-js";
 
 const app = express();
-app.use(cors());
+// app.use(cors());
+// app.use(cors({ origin: process.env.ALLOWED_ORIGINS || "*" }));
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(",")
+  : [
+      "http://localhost:3000", // Local development
+      "https://your-frontend.com", // Production frontend
+      "https://another-domain.com", // Additional domain
+    ];
 
+// Configure CORS to allow multiple origins
+app.use(
+  cors({
+    origin: allowedOrigins, // Array of allowed origins
+    credentials: true, // Allow cookies/auth headers
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], // Allowed methods
+  })
+);
 var SECRET_KEY_CRYPTO =
   "3e6dLf3A02D52L51630ac3883A339Y92b776CY97dbeYC21e113DdLe8314LbD84C53aad90C06D6A0aabYa6DCD139cCDCcf491AZA72CcYacb5CL7D08Zb159D7Z91";
 
@@ -115,6 +132,7 @@ async function addMainStatement(transection_id, type, amount, updated_balance,	d
         return false;
       }
   } catch (error) { 
+      console.log(error)
     return false;
   }
 }
@@ -240,6 +258,7 @@ app.post("/register", async (req, res) => {
 });
 
 app.post("/login", (req, res) => {
+    console.log(req.body);
   const { email, password } = req?.body;
   if (!email || !password) {
     return res.status(400).send({ message: "Email & Password is required" });
@@ -247,6 +266,7 @@ app.post("/login", (req, res) => {
   try {
     db.query("SELECT * FROM users WHERE email = ?", [email], (err, result) => {
       if (err) {
+          console.log(err)
         res.status(409).send({ message: "Internal Server Error !" });
       } else {
         if (result.length > 0) {
@@ -508,6 +528,7 @@ app.post( "/add-withdrawal-request", verifyToken, verifyPin, async (req, res) =>
         }
       }
     } catch (error) {
+        console.log(error)
       res.status(500).send({ message: "Internal Server Error Main" });
     }
   }
@@ -806,7 +827,8 @@ app.post("/add-match-bet", verifyToken, async(req,res)=>{
           // add bet recore in table
           const user_id = userDetail.user_id
           const betQuery = "INSERT INTO match_bets SET ?"
-          const betResult = await queryAsync(betQuery, {match_id, bet_type, bet_value, amount, user_id, section_id})
+          const win_amount = ""
+          const betResult = await queryAsync(betQuery, {match_id, bet_type, bet_value, amount, user_id, section_id, win_amount})
           if(betResult.affectedRows > 0){
             // deduct from wallet----------
             const walletUpdateQuery = "UPDATE wallet SET game_wallet = game_wallet - ? WHERE user_id = ? "
@@ -914,7 +936,10 @@ app.post("/admin/win-loss-match", winLossMatch)
 app.post("/admin/get-all-bets", getAllBets)
 
 
-const PORT = 3000;
+app.post("/admin/get-admin-data", getAdminData)
+
+
+const PORT = 3001;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });

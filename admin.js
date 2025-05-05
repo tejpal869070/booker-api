@@ -13,7 +13,6 @@ async function getUserDetail(user_id) {
     if(!user_id){
       return res.status(404).send({ message: "user_id is required !"})
     }
-  
     try {
       const query = `SELECT u.id, u.user_name, u.email, u.mobile, u.user_pin, u.user_id, w.main_wallet, w.game_wallet FROM users u INNER JOIN wallet w ON u.user_id = w.user_id WHERE u.user_id = ?`;
       const result = await queryAsync(query, [user_id]);
@@ -111,7 +110,7 @@ async function addMainStatement(transection_id, type, amount, updated_balance,	d
           return false;
         }
     } catch (error) {
-      return false
+      return false;
     }
   }
 
@@ -150,7 +149,7 @@ async function approveDepositRequest(req,res) {
           return res.status(400).send({ message: "Invalid Request!"})
         }
       } catch (error) {
-        console.log(error)
+        
         return res.status(500).send({ message: "Internal Server Error Main" });
       }
 }
@@ -180,6 +179,7 @@ async function rejectDepositRequest(req,res) {
             return res.status(400).send({ message: "Deposit Request Not Found!"})
         }
     } catch (error) {
+        console.log(error)
         return res.status(500).send({ message: "Internal Server Error" });
     }
 }
@@ -219,7 +219,7 @@ async function inprocessWithdrawalRequest(req, res) {
 
 
 async function rejectWithdrawalRequest(req,res) {
-    const { id, reason } = req.body 
+    const { id, reason } = req.body
     if(!id || !reason){
       return res.status(404).send({ message : "Id & Reason is required"})
     } 
@@ -263,7 +263,7 @@ async function rejectWithdrawalRequest(req,res) {
         res.status(404).send({ message : "Request not found"})
       }
     } catch (error) {
-      console.log(error)
+        console.log(error)
       return res.status(500).send({ message : "Internal Server Error !"})
     }
 }
@@ -371,8 +371,8 @@ async function addNewMatch(req, res) {
  
 
   try {
-    const query = `INSERT INTO match_table (match_time, sections, teams, title) VALUES (?, ?, ?, ?)`;
-    const values = [match_time, JSON.stringify(sections), JSON.stringify(teams), title];
+    const query = `INSERT INTO match_table (match_time, sections, teams, title, result) VALUES (?, ?, ?, ?, ?)`;
+    const values = [match_time, JSON.stringify(sections), JSON.stringify(teams), title, "Y"];
     const result = await queryAsync(query, values);
 
     if (result.affectedRows > 0) {
@@ -573,34 +573,48 @@ async function winLossMatch(req, res) {
     for (let bet of matchBetsResult) {
       const isExact = bet.bet_type === 'E' && Number(bet.bet_value) === Number(sectionResult);
       const isLastDigit = bet.bet_type === 'L' && Number(bet.bet_value) === Number(lastDigit);
-
+    
       if (isExact || isLastDigit) {
         winningUsers.push(bet);
-
+    
         // Get user's wallet
         const walletQuery = "SELECT * FROM wallet WHERE user_id = ?";
         const walletResult = await queryAsync(walletQuery, [bet.user_id]);
-
+    
         if (walletResult.length > 0) {
           const wallet = walletResult[0];
-          const amountWon = Number(bet.amount) * 9;
-          const newBalance = Number(wallet.game_wallet) + Number(amountWon); 
+    
+          // Calculate amount won based on bet type
+          const amountWon = bet.bet_type === 'E' 
+            ? Number(bet.amount) * 20  // change to desireed multiply
+            : Number(bet.amount) * 9;
+    
+          const newBalance = Number(wallet.game_wallet) + amountWon;
+    
           // Update wallet balance
           const updateWalletQuery = "UPDATE wallet SET game_wallet = ? WHERE user_id = ?";
           await queryAsync(updateWalletQuery, [newBalance, bet.user_id]);
-
-          //  Update win_amount in match_bets
+    
+          // Update win_amount in match_bets
           const updateBetQuery = "UPDATE match_bets SET win_amount = ? WHERE id = ?";
           await queryAsync(updateBetQuery, [amountWon, bet.id]);
-
-          // update game wallet statement
-          const userDetail = await getUserDetail(bet.user_id)
-          const game_name = "Match"
-          const description = "Match Win"
-          await addWalletStatement(userDetail.id, userDetail.email, amountWon, game_name, description, userDetail.user_id)
+    
+          // Update game wallet statement
+          const userDetail = await getUserDetail(bet.user_id);
+          const game_name = "Match";
+          const description = "Match Win";
+          await addWalletStatement(
+            userDetail.id,
+            userDetail.email,
+            amountWon,
+            game_name,
+            description,
+            userDetail.user_id
+          );
         }
       }
     }
+    
 
     return res.status(200).send({ winners: winningUsers });
 
@@ -625,7 +639,7 @@ async function getAllBets(req, res) {
     const userIds = [...new Set(bets.map(bet => bet.user_id))];
 
     // Fetch all user details at once
-    const placeholders = userIds.map(() => '?').join(',');
+    const placeholders = userIds.map(() => '?').join(','); 
     const usersQuery = `SELECT * FROM users WHERE user_id IN (${placeholders})`;
     const users = await queryAsync(usersQuery, userIds);
 
@@ -656,6 +670,50 @@ async function getAllBets(req, res) {
 
 
 
+async function getAdminData(req, res) {
+  try {
+      // Query to get the length of the deposit table
+      const depositQuery = "SELECT COUNT(*) AS depositCount FROM deposit";
+      const depositResult = await queryAsync(depositQuery);
+
+      // Query to get the length of the withdrawal table
+      const withdrawalQuery = "SELECT COUNT(*) AS withdrawalCount FROM withdrawal";
+      const withdrawalResult = await queryAsync(withdrawalQuery);
+
+      // Return the result as JSON
+      return res.status(200).send({
+          depositCount: depositResult[0].depositCount,
+          withdrawalCount: withdrawalResult[0].withdrawalCount
+      });
+  } catch (error) {
+      // Handle errors
+      return res.status(500).send({ message: "Internal Server Error" });
+  }
+}
 
 
-export { allDepositRequest,deleteMatch,getAllBets, winLossMatch,changeMatchStatus,updateMatchResults, approveDepositRequest,getSingleMatchDetail, rejectDepositRequest, inprocessWithdrawalRequest, allWithdrawalRequest , rejectWithdrawalRequest,apprveWithdrawalRequest,getAllMatch, getGames,addNewMatch, updateGames };
+
+
+
+// Assuming all the functions are already defined in the file, you can export them in one go
+
+export {
+  allDepositRequest,
+  deleteMatch,
+  getAllBets,
+  winLossMatch,
+  changeMatchStatus,
+  updateMatchResults,
+  approveDepositRequest,
+  getSingleMatchDetail,
+  rejectDepositRequest,
+  inprocessWithdrawalRequest,
+  allWithdrawalRequest,
+  rejectWithdrawalRequest,
+  apprveWithdrawalRequest,
+  getAllMatch,
+  getGames,
+  addNewMatch,
+  updateGames,
+  getAdminData
+};
