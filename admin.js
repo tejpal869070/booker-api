@@ -1,4 +1,8 @@
 import db from "./dbConnection.js";
+const SECRET_KEY = process.env.SECRET_KEY;
+import jwt from "jsonwebtoken";
+
+
 
 function queryAsync(query, params) {
     return new Promise((resolve, reject) => {
@@ -11,14 +15,14 @@ function queryAsync(query, params) {
 
 async function getUserDetail(user_id) {
     if(!user_id){
-      return res.status(404).send({ message: "user_id is required !"})
+      return false
     }
     try {
       const query = `SELECT u.id, u.user_name, u.email, u.mobile, u.user_pin, u.user_id, w.main_wallet, w.game_wallet FROM users u INNER JOIN wallet w ON u.user_id = w.user_id WHERE u.user_id = ?`;
       const result = await queryAsync(query, [user_id]);
       return result[0]
     } catch (error) {
-      return res.status(500).send({ message: "Internal Server Error" });
+      throw error
     }
   }
 
@@ -27,8 +31,7 @@ async function getUserDetail(user_id) {
 async function addWalletStatement( id, email, amount, game_name, description, user_id) {
   const transectionId = `GAME0${id}${Date.now()}`;
   try {
-    const user_game_wallet_balance = await queryAsync( "SELECT * FROM wallet WHERE user_id = ?", [user_id] );
-    console.log(user_id)
+    const user_game_wallet_balance = await queryAsync( "SELECT * FROM wallet WHERE user_id = ?", [user_id] ); 
     if (user_game_wallet_balance.length > 0) {
       const game_wallet_balance = user_game_wallet_balance[0].game_wallet;
       const statementQuery = "INSERT INTO game_wallet (email, amount, game_name, description, updated_balance, transection_id) VALUES (?, ?, ?, ?, ?, ?)";
@@ -43,14 +46,14 @@ async function addWalletStatement( id, email, amount, game_name, description, us
       return false;
     }
   } catch (error) { 
-    res.status(500).send({ message: " Error adding wallet statement" });
+    throw error
   }
 }
 
 
   async function getUserDetailEmail(email) {
     if(!email){
-      return res.status(404).send({ message: "email is required !"})
+      return false
     }
   
     try {
@@ -58,9 +61,39 @@ async function addWalletStatement( id, email, amount, game_name, description, us
       const result = await queryAsync(query, [email]);
       return result[0]
     } catch (error) {
-      return res.status(500).send({ message: "Internal Server Error" });
+      throw error
     }
   }
+  
+  
+async function adminTokenCheck(req, res) {
+  const authHeader = req.headers['authorization'];
+  const { username } = req.body
+
+  if (!authHeader || !username) {
+    return res.status(401).send({ message: "Authorization header missing." });
+  }
+
+  // Expected format: "Bearer <token>"
+  const token = authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).send({ message: "Token missing from Authorization header." });
+  }
+
+  try {
+    const decoded = jwt.verify(token, SECRET_KEY);
+
+    if (decoded.username === "admin" && decoded.role === "admin") {
+      res.status(200).send({ message: "Token is valid." });
+    } else {
+      res.status(403).send({ message: "Invalid token payload." });
+    }
+  } catch (error) {
+      console.log(error)
+    res.status(401).send({ message: "Token verification failed.", error: error.message });
+  }
+}
   
 
 
@@ -89,9 +122,7 @@ async function allWithdrawalRequest(req,res) {
       return res.status(500).send({ message: "Internal Server Error" });
   }
 }
-
-
-
+ 
 
 
 async function addMainStatement(transection_id, type, amount, updated_balance,	description, user_id ) {
@@ -111,6 +142,37 @@ async function addMainStatement(transection_id, type, amount, updated_balance,	d
         }
     } catch (error) {
       return false;
+    }
+  }
+
+
+
+  async function adminLogin(req, res) {
+    const { username, password } = req.body; // Assume that login credentials are sent in the body
+  
+    // Validate credentials
+    if (username === "admin" && password === "111111") {
+      try {
+        // Generate JWT token
+        const token = jwt.sign(
+          { username: "admin", role: "admin" }, // Payload
+          SECRET_KEY, // Secret key for signing the token
+          { expiresIn: "24h" } // Token expiration time (24 hours)
+        );
+  
+        // Send response with JWT token
+        res.status(200).send({
+          message: "Login successful!",
+          token: token
+        });
+      } catch (error) {
+        res.status(500).send({
+          message: "Error generating token.",
+          error: error.message
+        });
+      }
+    } else {
+      res.status(401).send({ message: "Invalid credentials!" });
     }
   }
 
@@ -461,14 +523,15 @@ async function changeMatchStatus(req,res) {
 
 
 async function updateMatchResults(req, res) {
-  const { match_id, section_id, result } = req.body;
+  const { match_id, section_id, result, team_name } = req.body;
 
-  if (!section_id || !match_id || !result) {
+  // Validate the incoming request body
+  if (!section_id || !match_id || result === undefined || !team_name) {
     return res.status(400).send({ message: "All fields are required!" });
   }
 
   try {
-    // Fetch match
+    // Fetch match from the database
     const findQuery = "SELECT * FROM match_table WHERE id = ?";
     const queryResult = await queryAsync(findQuery, [match_id]);
 
@@ -476,18 +539,34 @@ async function updateMatchResults(req, res) {
       return res.status(404).send({ message: "No match found!" });
     }
 
-    // Parse sections
+    // Parse sections from the match
     let match = queryResult[0];
-    let sections = JSON.parse(JSON.parse(match.sections)); 
-    // Find and update the section
+    let sections = JSON.parse(JSON.parse(match.sections)); // Sections are stored as stringified JSON
+
+    // Find the section to update
     const sectionIndex = sections.findIndex(sec => sec.id === Number(section_id));
     if (sectionIndex === -1) {
       return res.status(404).send({ message: "Section not found!" });
     }
 
-    sections[sectionIndex].result = result;
+    // Ensure the section has a result array, if not, initialize it
+    const section = sections[sectionIndex];
+    if (!section.result) {
+      section.result = []; // Initialize result as an empty array if it doesn't exist
+    }
 
-    // Update match in database
+    // Check if the team already exists in the result array
+    const existingResultIndex = section.result.findIndex(r => r.team_name === team_name);
+
+    if (existingResultIndex === -1) {
+      // If team_name doesn't exist, add it
+      section.result.push({ team_name, score: result });
+    } else {
+      // If team_name exists, update the score
+      return res.status(302).send({ message : "Already updated"})
+    }
+
+    // Update match in the database with the new sections data
     const updateQuery = "UPDATE match_table SET sections = ? WHERE id = ?";
     await queryAsync(updateQuery, [JSON.stringify(JSON.stringify(sections)), match_id]);
 
@@ -498,6 +577,9 @@ async function updateMatchResults(req, res) {
     return res.status(500).send({ message: "Internal server error!" });
   }
 }
+
+
+
 
 
 
@@ -538,7 +620,7 @@ async function deleteMatch(req, res) {
 
 
 async function winLossMatch(req, res) {
-  const { id, section_id } = req.body;
+  const { id, section_id, team_name } = req.body;
   if (!id || !section_id) {
     return res.status(404).send({ message: "Id is required!" });
   }
@@ -566,8 +648,8 @@ async function winLossMatch(req, res) {
       return res.status(404).send({ message: 'Section not found' });
     }
 
-    const winningUsers = [];
-    const sectionResult = section.result;
+    const winningUsers = [];  
+    const sectionResult = section.result?.find(i=> i.team_name===team_name)?.score;
     const lastDigit = sectionResult.toString().slice(-1);
 
     for (let bet of matchBetsResult) {
@@ -612,6 +694,9 @@ async function winLossMatch(req, res) {
             userDetail.user_id
           );
         }
+      } else{
+          const updateLossQuery = "UPDATE match_bets SET win_amount = 0 WHERE id = ?";
+          await queryAsync(updateLossQuery, [bet.id]);
       }
     }
     
@@ -619,6 +704,7 @@ async function winLossMatch(req, res) {
     return res.status(200).send({ winners: winningUsers });
 
   } catch (error) { 
+    console.log(error)
     res.status(500).send({ message: 'Internal server error' });
   }
 }
@@ -715,5 +801,7 @@ export {
   getGames,
   addNewMatch,
   updateGames,
+  adminLogin,
+  adminTokenCheck,
   getAdminData
 };
