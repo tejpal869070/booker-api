@@ -29,7 +29,14 @@ import {
   getAllBets,
   getAdminData,
   adminLogin,
-  adminTokenCheck
+  adminTokenCheck,
+  getAllUsers,
+  getUserDetails,
+  updateUserStatus,
+  addRefund,
+  getAllGamesData,
+  completeMatch,
+  updateMatchTime
 } from "./admin.js";
 import db from "./dbConnection.js";
 import cors from "cors";
@@ -44,7 +51,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   : [
       "http://localhost:3000", // Local development
       "https://your-frontend.com", // Production frontend
-      "https://another-domain.com", // Additional domain
+      "http://192.168.29.169:8081"
     ];
 
 // Configure CORS to allow multiple origins
@@ -111,7 +118,7 @@ async function addWalletStatement(id, email, amount, game_name, description, use
       const statementResult = await queryAsync(statementQuery, statementParams);
 
       if (statementResult.affectedRows > 0) {
-        return true;
+        return transectionId;
       } else {
         console.error("Failed to add wallet statement.");
         return false;
@@ -268,71 +275,75 @@ app.post("/register", async (req, res) => {
   }
 });
 
-app.post("/login", (req, res) => { 
-  const { emailOrMobile, password } = req?.body;  // Expect either email or mobile number
+app.post("/login", (req, res) => {
+  const { emailOrMobile, password } = req?.body; 
 
   if (!emailOrMobile || !password) {
     return res.status(400).send({ message: "Email/Mobile & Password are required" });
   }
 
   try {
-    // Check if the provided input is an email or mobile
-    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailOrMobile); // Simple email regex
+    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailOrMobile);
     let query = "SELECT * FROM users WHERE ";
 
     if (isEmail) {
       query += "email = ?";
     } else {
-      query += "mobile = ?"; // Assuming `mobile` is a column in the `users` table
+      query += "mobile = ?";
     }
 
     db.query(query, [emailOrMobile], (err, result) => {
       if (err) {
         console.log(err);
         return res.status(409).send({ message: "Internal Server Error!" });
-      } else {
-        if (result.length > 0) {
-          const user = result[0];
-          const isValidPassword = bcrypt.compareSync(password, user.password);
+      } 
 
-          if (isValidPassword) {
-            // Generate token
-            const token = jwt.sign(
-              { id: user.id, email: user.email, user_id: user.user_id },
-              SECRET_KEY,
-              { expiresIn: "24h" }
-            );
+      if (result.length > 0) {
+        const user = result[0];
 
-            // Store token in the database
-            db.query(
-              "INSERT INTO token (token, email) VALUES (?, ?) ON DUPLICATE KEY UPDATE token = ?",
-              [token, user.email, token],
-              (err, result) => {
-                if (err) {
-                  return res.status(409).send({ message: "Error saving token" });
-                } else {
-                  res.status(200).send({
-                    message: "Login Successful!",
-                    status: true,
-                    token: token,
-                    email: user.email,
-                    userId: user.id,
-                  });
-                }
-              }
-            );
-          } else {
-            res.status(400).send({ message: "Invalid Password!" });
-          }
-        } else {
-          res.status(400).send({ message: "Account Not Found" });
+        // Check if user is active
+        if (user.is_active === "N") {
+          return res.status(403).send({ message: "User is blocked"});
         }
+
+        const isValidPassword = bcrypt.compareSync(password, user.password);
+
+        if (isValidPassword) {
+          const token = jwt.sign(
+            { id: user.id, email: user.email, user_id: user.user_id },
+            SECRET_KEY,
+            { expiresIn: "24h" }
+          );
+
+          db.query(
+            "INSERT INTO token (token, email) VALUES (?, ?) ON DUPLICATE KEY UPDATE token = ?",
+            [token, user.email, token],
+            (err) => {
+              if (err) {
+                return res.status(409).send({ message: "Error saving token" });
+              } 
+              
+              res.status(200).send({
+                message: "Login Successful!",
+                status: true,
+                token: token,
+                email: user.email,
+                userId: user.id,
+              });
+            }
+          );
+        } else {
+          res.status(400).send({ message: "Invalid Password!" });
+        }
+      } else {
+        res.status(400).send({ message: "Account Not Found" });
       }
     });
   } catch (error) {
     res.status(500).send({ message: "Server Down" });
   }
 });
+
 
 app.post("/check-token", async (req, res) => {
   const { email } = req.body;
@@ -497,7 +508,7 @@ app.post("/verify-pin", verifyToken, async (req, res) => {
   }
 });
 
-app.post( "/add-deposit-request", upload.single("image"), verifyToken, async (req, res) => {
+app.post( "/add-deposit-request", upload.single("image"), verifyToken, async (req, res) => {  
     const { email, transection_hash, deposit_to, amount } = req?.body;
     const image = req?.file;
     if ( !email || !transection_hash || !image || !deposit_to || !amount || isNaN(amount) || amount <= 0
@@ -536,6 +547,7 @@ app.post( "/add-deposit-request", upload.single("image"), verifyToken, async (re
         res.status(200).send({ message: "Deposit Request Added Successfully!" });
       }
     } catch (error) {
+        console.log(error)
       fs.unlinkSync(path.join(__dirname, "assets", image.filename));
       res.status(500).send({ message: "Internal Server Error" });
     }
@@ -636,8 +648,12 @@ app.post("/inter-wallet-money-transfer", verifyToken, verifyPin, async (req, res
         const description = "Received From Main Wallet";
         const game_type = "Received";
         const statementAdded = await addWalletStatement(req.user.id, email, amount, game_type, description, user_id);
-
-        if (statementAdded) {
+        // addd main wallet statement
+        const userDetail = await getUserDetail(req.user.email)
+        const type = "Money Transfer"
+        const description2 = "Sent to Game Wallet"
+        const mainStatementAdded = await addMainStatement(statementAdded, type, amount, userDetail.main_wallet,description2, req.user.user_id );
+        if (statementAdded || mainStatementAdded) {
           return res.status(200).send({ message: "Money Transferred Successfully!" });
         } else {
           return res.status(500).send({ message: "Failed to add statement to Game Wallet!" });
@@ -662,8 +678,12 @@ app.post("/inter-wallet-money-transfer", verifyToken, verifyPin, async (req, res
         const description = "Sent to Main Wallet";
         const game_type = "Transfer";
         const statementAdded = await addWalletStatement(req.user.id, email, amount, game_type, description, user_id);
-
-        if (statementAdded) {
+        // addd main wallet statement
+        const userDetail = await getUserDetail(req.user.email)
+        const type = "Money Transfer"
+        const description2 = "Recieved from Game Wallet"
+        const mainStatementAdded = await addMainStatement(statementAdded, type, amount, userDetail.main_wallet,description2, req.user.user_id );
+        if (statementAdded || mainStatementAdded) {
           return res.status(200).send({ message: "Money Transferred Successfully!" });
         } else {
           return res.status(500).send({ message: "Failed to add statement to Game Wallet!" });
@@ -1009,6 +1029,29 @@ app.post("/my-match-bets", verifyToken, async (req, res) => {
   }
 });
 
+app.post('/user/get-all-match', async(req,res)=>{ 
+  try {
+    const query = "SELECT * FROM match_table WHERE visible = 'Y'";
+    const result = await queryAsync(query, []);
+ 
+    const parsedResult = result.map(match => { 
+      if (match.sections) {
+        match.sections = JSON.parse(JSON.parse(match.sections));
+      }
+ 
+      if (match.teams) {
+        match.teams = JSON.parse(match.teams);
+      }
+
+      return match;
+    });
+
+    return res.status(200).send(parsedResult);
+  } catch (error) {
+    return res.status(500).send({ message: "Internal Server Error!" });
+  } 
+})
+
 
  
 
@@ -1033,7 +1076,7 @@ app.post("/admin/add-new-match", upload.array('team_image') ,addNewMatch)
 
 app.post("/admin/get-all-match", getAllMatch)
 
-app.post("/get-single-match-detail", getSingleMatchDetail)
+app.post("/admin/get-single-match-detail", getSingleMatchDetail)
 
  
 app.post("/admin/change-match-status", changeMatchStatus)
@@ -1046,11 +1089,23 @@ app.post("/admin/win-loss-match", winLossMatch)
 
 app.post("/admin/get-all-bets", getAllBets)
 
+app.post("/admin/complete-match", completeMatch)
+
+app.post("/admin/update-match-time", updateMatchTime)
+
 
 app.post("/admin/get-admin-data", getAdminData)
+
+
+app.post("/admin/get-all-users", getAllUsers)
+app.post("/admin/get-user-details", getUserDetails)
+app.post("/admin/block-user", updateUserStatus)
+app.post("/admin/add-refund", addRefund)
+app.post("/admin/get-games-data", getAllGamesData)
 
 
 const PORT = 3000;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
+ 
