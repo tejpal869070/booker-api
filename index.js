@@ -110,7 +110,7 @@ async function addWalletStatement(id, email, amount, game_name, description, use
     const user_game_wallet_balance = await queryAsync("SELECT * FROM wallet WHERE user_id = ?", [user_id]);
 
     if (user_game_wallet_balance.length > 0) {
-      const game_wallet_balance = user_game_wallet_balance[0].game_wallet;
+      const game_wallet_balance = user_game_wallet_balance[0].main_wallet;
 
       const statementQuery =
         "INSERT INTO game_wallet (email, amount, game_name, description, updated_balance, transection_id) VALUES (?, ?, ?, ?, ?, ?)";
@@ -414,7 +414,7 @@ app.post("/verify-otp", async (req, res) => {
 });
 
 
-app.post('/forget-password', async (req, res) => {
+app.post('/reset-password', async (req, res) => {
   const { email, password } = req.body;
 
   // Check if email and password are provided
@@ -431,7 +431,7 @@ app.post('/forget-password', async (req, res) => {
 
     if (result.length === 0) {
       return res.status(400).send({ message: "Email is not registered!" });
-    }
+    } 
 
     try {
       // Hash the new password before storing it in the database
@@ -449,7 +449,8 @@ app.post('/forget-password', async (req, res) => {
           message: "Password reset successfully!",
         });
       });
-    } catch (error) {
+    } catch (error) { 
+      console.log("tjis",error)
       res.status(500).send({ message: "Error hashing password" });
     }
   });
@@ -508,51 +509,52 @@ app.post("/verify-pin", verifyToken, async (req, res) => {
   }
 });
 
-app.post( "/add-deposit-request", upload.single("image"), verifyToken, async (req, res) => {  
-    const { email, transection_hash, deposit_to, amount } = req?.body;
-    const image = req?.file;
-    if ( !email || !transection_hash || !image || !deposit_to || !amount || isNaN(amount) || amount <= 0
-    ) {
-      if (image) {
-        fs.unlinkSync(path.join(__dirname, "assets", image?.filename));
-      }
-      res.status(400).send({ message: "All fields are required!" });
-    }
-    try {
-      // check that user deposit to our address or not
-      const checkAddressQuery = "SELECT * FROM usdt_address where usdt_address = ?";
-      const checkAddressResult = await queryAsync(checkAddressQuery, [  deposit_to, ]);
-      if (checkAddressResult.length === 0) {
-        return res.status(404).send({ message: "You are not depositing on our address." });
-      }
+app.post("/add-deposit-request", verifyToken, async (req, res) => {
+  const { email, transection_hash, deposit_to, amount } = req?.body;
 
-      const duplicateDeposit = "SELECT transection_hash FROM deposit WHERE transection_hash = ?";
-      const duplicateDepositResult = await queryAsync(duplicateDeposit, [ transection_hash ]);
-
-      const alreadyDeposit = "SELECT * FROM deposit where user_id = ? AND status = 'P'";
-      const alreadyDepositResult = await queryAsync(alreadyDeposit, [ req.user.user_id ]);
-      if (alreadyDepositResult.length > 0) {
-        return res.status(409).send({ message: "An Deposit request is already in process !" });
-      }
-
-      if (duplicateDepositResult.length > 0) {
-        fs.unlinkSync(path.join(__dirname, "assets", image.filename));
-        res.status(400).send({ message: "Transection Hash Already Exist!" });
-      } else {
-        const image_url = `/assets/${image.filename}`;
-        const query = "INSERT INTO deposit SET ?";
-        const transection_id = `DPST0${req.user.id}${Date.now()}`;
-        const user_id = req.user.user_id;
-        await queryAsync(query, { user_id, transection_hash, deposit_to, amount, image_url, transection_id });
-        res.status(200).send({ message: "Deposit Request Added Successfully!" });
-      }
-    } catch (error) {
-        console.log(error)
-      fs.unlinkSync(path.join(__dirname, "assets", image.filename));
-      res.status(500).send({ message: "Internal Server Error" });
-    }
+  if (!email || !transection_hash || !deposit_to || !amount || isNaN(amount) || amount <= 0) {
+    return res.status(400).send({ message: "All fields are required!" });
   }
-);
+
+  try {
+    // Check that user deposited to our address
+    const checkAddressQuery = "SELECT * FROM usdt_address WHERE usdt_address = ?";
+    const checkAddressResult = await queryAsync(checkAddressQuery, [deposit_to]);
+
+    if (checkAddressResult.length === 0) {
+      return res.status(404).send({ message: "You are not depositing on our address." });
+    }
+
+    // Check for duplicate transaction hash
+    const duplicateDeposit = "SELECT transection_hash FROM deposit WHERE transection_hash = ?";
+    const duplicateDepositResult = await queryAsync(duplicateDeposit, [transection_hash]);
+
+    if (duplicateDepositResult.length > 0) {
+      return res.status(400).send({ message: "Transaction Hash Already Exists!" });
+    }
+
+    // Check if there's already a pending deposit for this user
+    const alreadyDeposit = "SELECT * FROM deposit WHERE user_id = ? AND status = 'P'";
+    const alreadyDepositResult = await queryAsync(alreadyDeposit, [req.user.user_id]);
+
+    if (alreadyDepositResult.length > 0) {
+      return res.status(409).send({ message: "A deposit request is already in process!" });
+    }
+
+    // Insert new deposit request
+    const transection_id = `DPST0${req.user.id}${Date.now()}`;
+    const user_id = req.user.user_id;
+    const insertQuery = "INSERT INTO deposit (user_id, transection_hash, deposit_to, amount, transection_id, type) VALUES (?, ?, ?, ?, ?,?)";
+    await queryAsync(insertQuery, [user_id, transection_hash, deposit_to, amount, transection_id, "Pending Despoit"]);
+    
+
+    res.status(200).send({ message: "Deposit Request Added Successfully!" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ message: "Internal Server Error" });
+  }
+});
+
 
 app.post( "/add-withdrawal-request", verifyToken, verifyPin, async (req, res) => {
     const { email, withdrawal_address, amount } = req.body;
@@ -560,7 +562,7 @@ app.post( "/add-withdrawal-request", verifyToken, verifyPin, async (req, res) =>
     if ( !email || !withdrawal_address || !amount || isNaN(amount) || amount <= 0) {
       res.status(400).send({ message: "All Fields are Required!" });
     }
-
+ 
     try { 
       // find if there is already withdrawal request exists
       const findWithdrawalQuery = "SELECT status FROM withdrawal WHERE email = ? AND status = ?";
@@ -737,7 +739,7 @@ app.post("/deduct-game-wallet", verifyToken, async (req, res) => {
         return res.status(404).send({ message: "User wallet not found!" });
       }
 
-      const currentBalance = findUserBalanceResult[0].game_wallet;
+      const currentBalance = findUserBalanceResult[0].main_wallet;
       if (currentBalance < amount) {
         return res.status(400).send({ message: "Insufficient Balance!" });
       }
@@ -748,7 +750,7 @@ app.post("/deduct-game-wallet", verifyToken, async (req, res) => {
         return res.status(400).send({ message: "Amount exceeds available balance!" });
       }
 
-      const deductGameWalletQuery = "UPDATE wallet SET game_wallet = ? WHERE user_id = ?";
+      const deductGameWalletQuery = "UPDATE wallet SET main_wallet = ? WHERE user_id = ?";
       const deductGameWalletResult = await queryAsync(deductGameWalletQuery, [newBalance, req.user.user_id]);
 
       if (deductGameWalletResult.affectedRows > 0) {
@@ -763,7 +765,7 @@ app.post("/deduct-game-wallet", verifyToken, async (req, res) => {
 
     } else if (type === "add") {
       // Add amount to game wallet
-      const addGameWalletQuery = "UPDATE wallet SET game_wallet = game_wallet + ? WHERE user_id = ?";
+      const addGameWalletQuery = "UPDATE wallet SET main_wallet = main_wallet + ? WHERE user_id = ?";
       const addGameWalletResult = await queryAsync(addGameWalletQuery, [parseFloat(amount), req.user.user_id]);
 
       if (addGameWalletResult.affectedRows > 0) {
@@ -898,15 +900,25 @@ app.post('/cancel-withdrawal-request', verifyToken, async(req,res)=>{
 })
 
 
-app.post('/get-statement', verifyToken, async(req,res)=>{
+app.post('/get-statement', verifyToken, async (req, res) => {
   try {
-    const query = "SELECT * FROM statement WHERE user_id = ?"
-    const result = await queryAsync(query, [req.user.user_id])
-    return res.status(200).send(result)
+    const query1 = "SELECT *  FROM statement WHERE user_id = ?";
+    const query2 = "SELECT * FROM deposit WHERE user_id = ? AND status = 'P'";
+
+    const [statementResult, depositResult] = await Promise.all([
+      queryAsync(query1, [req.user.user_id]),
+      queryAsync(query2, [req.user.user_id])
+    ]);
+
+    const combined = [...statementResult, ...depositResult];
+
+    return res.status(200).send(combined);
   } catch (error) {
+    console.error("Error fetching combined data:", error);
     return res.status(500).send({ message: "Internal Server Error" });
   }
-})
+});
+
 
 app.post("/user/get-games" ,async(req,res)=>{
   try {

@@ -6,8 +6,7 @@ dotenv.config();
 
 
 export default async function verifyToken(req, res, next) {   
-    const email = req?.body?.email; 
-    console.log(req.body) 
+    const email = req?.body?.email;  
     if(!email){ 
         return res.status(401).json({message: 'Unauthorized'});
     }
