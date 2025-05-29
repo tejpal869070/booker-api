@@ -454,7 +454,7 @@ async function addNewMatch(req, res) {
       // Calculate time 10 minutes before match_time
       const scheduleTime = moment(match_time).subtract(10, 'minutes');
       const cronExpression = `${scheduleTime.minute()} ${scheduleTime.hour()} ${scheduleTime.date()} ${scheduleTime.month() + 1} *`;
-      console.log(cronExpression)
+ 
       const job = cron.schedule(cronExpression, async () => {
         try {
             await changeMatchStatusLogic({
@@ -595,7 +595,7 @@ async function getSingleMatchDetail (req,res){
 }
 
 
-async function changeMatchStatusLogic({ id, status, can_bet_place }) {
+async function changeMatchStatusLogic({ id, status, can_bet_place, visible = "Y" }) {
   if (!id || !status) {
     throw new Error("Id & status are required!");
   }
@@ -607,8 +607,8 @@ async function changeMatchStatusLogic({ id, status, can_bet_place }) {
     throw new Error("No match found!");
   }
 
-  const updateQuery = "UPDATE match_table SET status = ?, can_place_bet = ? WHERE id = ?";
-  const updateResult = await queryAsync(updateQuery, [status, can_bet_place, id]);
+  const updateQuery = "UPDATE match_table SET status = ?, can_place_bet = ?, visible = ? WHERE id = ?";
+  const updateResult = await queryAsync(updateQuery, [status, can_bet_place, visible , id]);
 
   if (updateResult.affectedRows > 0) {
     return { success: true, message: "Match is Live Now!" };
@@ -787,7 +787,7 @@ async function winLossMatch(req, res) {
           const newBalance = Number(wallet.game_wallet) + amountWon;
     
           // Update wallet balance
-          const updateWalletQuery = "UPDATE wallet SET game_wallet = ? WHERE user_id = ?";
+          const updateWalletQuery = "UPDATE wallet SET main_wallet = ? WHERE user_id = ?";
           await queryAsync(updateWalletQuery, [newBalance, bet.user_id]);
     
           // Update win_amount in match_bets
@@ -891,6 +891,26 @@ async function completeMatch(req, res) {
     // update match status
     let updateMatchQuery = "UPDATE match_table SET status = ? , can_place_bet = ? WHERE id = ?";
     await queryAsync(updateMatchQuery, ["C","N", id]); 
+
+    // change visibility to N after two days
+    const twoDaysLater = moment().add(2, 'minutes'); // 2 days after now
+
+    const cronExpression = `${twoDaysLater.minute()} ${twoDaysLater.hour()} ${twoDaysLater.date()} ${twoDaysLater.month() + 1} *`;
+
+    cron.schedule(cronExpression, async () => {
+      try {
+        await changeMatchStatusLogic({
+          id: id,
+          status: 'C', // or keep current status
+          can_bet_place: 'N', // optional depending on your logic
+          visible: "N"
+        });
+        console.log(`✅ Match ${id} visibility set to 'N' after 2 days.`);
+      } catch (err) {
+        console.error(`❌ Failed to update match ${id} visibility in cron:`, err.message);
+      }
+    });
+
 
     return res.status(200).send({
       message: "Match completed. All unprocessed bets refunded.",

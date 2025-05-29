@@ -553,7 +553,7 @@ app.post("/add-deposit-request", verifyToken, async (req, res) => {
     console.error(error);
     res.status(500).send({ message: "Internal Server Error" });
   }
-});
+}); 
 
 
 app.post( "/add-withdrawal-request", verifyToken, verifyPin, async (req, res) => {
@@ -789,7 +789,7 @@ app.post("/deduct-game-wallet", verifyToken, async (req, res) => {
 
 
 
-app.post('/get-game-statement', verifyToken, async(req,res)=>{
+app.post("/get-game-statement", verifyToken, async(req,res)=>{
   const { type } = req.body  
   if(!type){
     return res.status(404).send({ message : "Type not defined !"})
@@ -808,7 +808,7 @@ app.post('/get-game-statement', verifyToken, async(req,res)=>{
   }
 })
 
-
+ 
 
 app.post('/get-all-game-statement', verifyToken, async(req,res)=>{ 
   try {
@@ -932,6 +932,7 @@ app.post("/user/get-games" ,async(req,res)=>{
 
 
 app.post("/add-match-bet", verifyToken, async (req, res) => {
+  console.log(req.body)
   const { match_id, bet_type, bet_value, amount, section_id, selectedTeamName } = req.body; 
 
   // Validate input fields
@@ -959,7 +960,7 @@ app.post("/add-match-bet", verifyToken, async (req, res) => {
 
       // Check user balance
       const userDetail = await getUserDetail(req.user.email);
-      if (userDetail.game_wallet < amount) {
+      if (userDetail.main_wallet < amount) {
         return res.status(400).send({ message: "Insufficient balance!" });
       }
 
@@ -971,7 +972,7 @@ app.post("/add-match-bet", verifyToken, async (req, res) => {
 
       if (betResult.affectedRows > 0) {
         // Deduct the bet amount from the user's game wallet
-        const walletUpdateQuery = "UPDATE wallet SET game_wallet = game_wallet - ? WHERE user_id = ?";
+        const walletUpdateQuery = "UPDATE wallet SET main_wallet = main_wallet - ? WHERE user_id = ?";
         await queryAsync(walletUpdateQuery, [amount, req.user.user_id]);
 
         // Add wallet statement
@@ -996,11 +997,15 @@ app.post("/add-match-bet", verifyToken, async (req, res) => {
 
 
 app.post("/my-match-bets", verifyToken, async (req, res) => {
+  const { match_id } = req?.body
+  if( !match_id ){
+    return res.status(400).send({ message: "Match ID is required!" });
+  } 
   try {
-    const betsQuery = "SELECT * FROM match_bets WHERE user_id = ?";
-    const bets = await queryAsync(betsQuery, [req.user.user_id]);
-
-    const enrichedBets = await Promise.all(
+    const betsQuery = "SELECT * FROM match_bets WHERE user_id = ? AND match_id = ?";
+    const bets = await queryAsync(betsQuery, [req.user.user_id, match_id]); 
+ 
+    const enrichedBets = await Promise.all( 
       bets.map(async (bet) => {
         const matchQuery = "SELECT * FROM match_table WHERE id = ?";
         const match = await queryAsync(matchQuery, [bet.match_id]);
