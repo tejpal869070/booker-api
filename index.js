@@ -760,7 +760,7 @@ app.post("/deduct-game-wallet", verifyToken, async (req, res) => {
 
         return res.status(200).send({ message: "Money Deducted Successfully!" });
       } else {
-        return res.status(500).send({ message: "Money can't be deducted!" });
+        return res.status(500).send({ message: "Money can't be deducted!" }); 
       }
 
     } else if (type === "add") {
